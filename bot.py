@@ -19,12 +19,11 @@ from pydub import AudioSegment
 # ==========================================
 # НАСТРОЙКИ
 # ==========================================
-BOT_TOKEN = "8882323055:AAGAwA6sR3BZRrhdPWGWXJNADoFvcxfeeGA"
-GMAIL_ADDRESS = "lexajukov.82@gmail.com"
-GMAIL_APP_PASSWORD = "lxmmdqirmsbyuljx" # ВСТАВЬ СЮДА СВОЙ РАБОЧИЙ ПАРОЛЬ!
+BOT_TOKEN = os.getenv("BOT_TOKEN", "ТВОЙ_ТОКЕН")
+GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS", "lexjukov.82@gmail.com")
+GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "ТВОЙ_ПАРОЛЬ")
 
 logging.basicConfig(level=logging.INFO)
-
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
@@ -46,12 +45,11 @@ class AddTask(StatesGroup): waiting_for_text = State()
 class MoveTask(StatesGroup): waiting_for_id = State(); waiting_for_date = State()
 class AddWorkoutPlan(StatesGroup): waiting_for_plan = State()
 class AddNote(StatesGroup): waiting_for_text = State()
-class VoiceChoice(StatesGroup): waiting_for_choice = State() # Для выбора: задача или заметка
+class VoiceChoice(StatesGroup): waiting_for_choice = State()
 
-# Храним распознанный текст временно
 voice_text_cache = {}
 
-# --- КЛАВИАТУРА ---
+# --- КЛАВИАТУРЫ ---
 def get_main_keyboard():
     builder = InlineKeyboardBuilder()
     builder.button(text="📝 Добавить в план", callback_data="add_task")
@@ -90,62 +88,43 @@ async def get_unread_emails_count():
             except: pass
     return await asyncio.to_thread(_check_imap)
 
-# --- ОБРАБОТКА ГОЛОСОВЫХ СООБЩЕНИЙ ---
+# --- ГОЛОСОВЫЕ СООБЩЕНИЯ ---
 @dp.message(F.voice)
 async def handle_voice_message(message: types.Message):
     await message.answer("🎤 Слушаю и распознаю... Подожди пару секунд ⏳")
-    
-    # Скачиваем голосовое сообщение
     file = await bot.get_file(message.voice.file_id)
-    file_path = file.file_path
     ogg_path = f"voice_{message.from_user.id}.ogg"
     wav_path = f"voice_{message.from_user.id}.wav"
-    
-    await bot.download_file(file_path, ogg_path)
-    
+    await bot.download_file(file.file_path, ogg_path)
     try:
-        # Конвертируем OGG в WAV (требует ffmpeg)
         audio = AudioSegment.from_file(ogg_path, format="ogg")
         audio.export(wav_path, format="wav")
-        
-        # Распознаем речь
         recognizer = sr.Recognizer()
         with sr.AudioFile(wav_path) as source:
             audio_data = recognizer.record(source)
-            
-        # Используем Google Speech Recognition (бесплатно и хорошо знает русский)
         text = recognizer.recognize_google(audio_data, language="ru-RU")
-        
-        # Сохраняем во временный кэш и спрашиваем, куда сохранить
         voice_text_cache[message.from_user.id] = text
-        await message.answer(
-            f"🗣 Я услышал: **\"{text}\"**\n\nКуда это сохранить?",
-            reply_markup=get_voice_choice_keyboard()
-        )
-        
+        await message.answer(f"🗣 Я услышал: **\"{text}\"**\n\nКуда это сохранить?", reply_markup=get_voice_choice_keyboard())
     except sr.UnknownValueError:
-        await message.answer("🤔 Не удалось распознать речь. Попробуй сказать четче или напиши текстом.")
+        await message.answer("🤔 Не удалось распознать речь.")
     except sr.RequestError:
-        await message.answer("⚠️ Ошибка сервиса распознавания речи. Проверь интернет.")
+        await message.answer("⚠️ Ошибка сервиса распознавания.")
     except Exception as e:
-        logging.error(f"Ошибка обработки голоса: {e}")
-        await message.answer("❌ Произошла ошибка при обработке аудио. Установлен ли ffmpeg?")
+        logging.error(f"Ошибка голоса: {e}")
+        await message.answer("❌ Ошибка обработки аудио.")
     finally:
-        # Удаляем временные файлы
         if os.path.exists(ogg_path): os.remove(ogg_path)
         if os.path.exists(wav_path): os.remove(wav_path)
 
 @dp.callback_query(F.data == "voice_to_task")
 async def voice_to_task(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    text = voice_text_cache.get(user_id, "Распознанный текст")
+    text = voice_text_cache.get(user_id, "Текст")
     today = date.today().isoformat()
-    
     async with aiosqlite.connect("assistant.db") as db:
         await db.execute("INSERT INTO tasks (user_id, task_text, task_date, task_type) VALUES (?, ?, ?, ?)",
                          (user_id, text, today, "plan"))
         await db.commit()
-    
     del voice_text_cache[user_id]
     await callback.message.edit_text(f"✅ Добавлено в задачи: **{text}**", reply_markup=get_main_keyboard())
     await callback.answer()
@@ -153,14 +132,12 @@ async def voice_to_task(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "voice_to_note")
 async def voice_to_note(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    text = voice_text_cache.get(user_id, "Распознанный текст")
+    text = voice_text_cache.get(user_id, "Текст")
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
-    
     async with aiosqlite.connect("assistant.db") as db:
         await db.execute("INSERT INTO notes (user_id, note_text, created_at) VALUES (?, ?, ?)",
                          (user_id, text, now))
         await db.commit()
-    
     del voice_text_cache[user_id]
     await callback.message.edit_text(f"📓 Сохранено в заметки: **{text}**", reply_markup=get_main_keyboard())
     await callback.answer()
@@ -173,11 +150,12 @@ async def voice_cancel(callback: types.CallbackQuery):
     await callback.message.edit_text("❌ Отменено.", reply_markup=get_main_keyboard())
     await callback.answer()
 
-# --- СТАНДАРТНЫЕ ХЕНДЛЕРЫ (Start, Task, Note, etc.) ---
+# --- СТАРТ ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer("Привет! Я твой личный ассистент. 🤖\n\nВыбери действие или просто отправь мне голосовое сообщение!", reply_markup=get_main_keyboard())
+    await message.answer("Привет! Я твой личный ассистент. 🤖\n\nВыбери действие или отправь голосовое сообщение!", reply_markup=get_main_keyboard())
 
+# --- ПРОВЕРКА ПОЧТЫ (кнопка) ---
 @dp.callback_query(F.data == "check_email")
 async def process_check_email(callback: types.CallbackQuery):
     await callback.answer("Проверяю почту... ⏳")
@@ -188,22 +166,35 @@ async def process_check_email(callback: types.CallbackQuery):
         await callback.message.answer("📧 **Статус почты:**\nНе удалось подключиться.")
     await callback.answer()
 
+# --- ЗАДАЧИ И ТРЕНИРОВКИ ---
 @dp.callback_query(F.data == "add_task")
 async def process_add_task(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text("Напиши задачу для плана на сегодня:")
     await state.set_state(AddTask.waiting_for_text)
+    await state.update_data(task_type="plan")
+    await callback.answer()
+
+@dp.callback_query(F.data == "add_workout")
+async def process_add_workout(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text("Какую тренировку добавим? (например: Бег 5 км или Зал - день ног)")
+    await state.set_state(AddTask.waiting_for_text)
+    await state.update_data(task_type="workout")
     await callback.answer()
 
 @dp.message(AddTask.waiting_for_text)
 async def save_task(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    task_type = data.get("task_type", "plan")
     today = date.today().isoformat()
     async with aiosqlite.connect("assistant.db") as db:
         await db.execute("INSERT INTO tasks (user_id, task_text, task_date, task_type) VALUES (?, ?, ?, ?)",
-                         (message.from_user.id, message.text, today, "plan"))
+                         (message.from_user.id, message.text, today, task_type))
         await db.commit()
     await state.clear()
-    await message.answer("📝 Записал!", reply_markup=get_main_keyboard())
+    emoji = "💪" if task_type == "workout" else "📝"
+    await message.answer(f"{emoji} Записал!", reply_markup=get_main_keyboard())
 
+# --- ЗАМЕТКИ ---
 @dp.callback_query(F.data == "add_note")
 async def process_add_note(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text("Напиши свою заметку:")
@@ -229,6 +220,7 @@ async def show_notes(callback: types.CallbackQuery):
     await callback.message.edit_text(text, reply_markup=get_main_keyboard())
     await callback.answer()
 
+# --- ПЛАН НА СЕГОДНЯ ---
 @dp.callback_query(F.data == "show_today")
 async def show_today(callback: types.CallbackQuery):
     today = date.today().isoformat()
@@ -239,7 +231,90 @@ async def show_today(callback: types.CallbackQuery):
     await callback.message.edit_text(text, reply_markup=get_main_keyboard())
     await callback.answer()
 
-# (Остальные хендлеры переноса и плана тренировок можно добавить по аналогии, если нужны, или оставить как есть для краткости)
+# --- ПЕРЕНОС ЗАДАЧИ ---
+@dp.callback_query(F.data == "move_task")
+async def process_move_task(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text("Напиши ID задачи, которую хочешь перенести (ID виден в «План на сегодня»):")
+    await state.set_state(MoveTask.waiting_for_id)
+    await callback.answer()
+
+@dp.message(MoveTask.waiting_for_id)
+async def move_task_get_id(message: types.Message, state: FSMContext):
+    try:
+        task_id = int(message.text)
+        await state.update_data(task_id=task_id)
+        await message.answer("На какую дату перенести? (формат: ГГГГ-ММ-ДД, например 2026-10-20)")
+        await state.set_state(MoveTask.waiting_for_date)
+    except ValueError:
+        await message.answer("Нужно ввести число (ID). Попробуй ещё раз:")
+
+@dp.message(MoveTask.waiting_for_date)
+async def move_task_complete(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    task_id = data.get("task_id")
+    new_date = message.text.strip()
+    try:
+        datetime.strptime(new_date, "%Y-%m-%d")
+    except ValueError:
+        await message.answer("Неверный формат даты. Используй ГГГГ-ММ-ДД")
+        return
+    async with aiosqlite.connect("assistant.db") as db:
+        await db.execute("UPDATE tasks SET task_date = ? WHERE id = ? AND user_id = ?",
+                         (new_date, task_id, message.from_user.id))
+        await db.commit()
+    await state.clear()
+    await message.answer(f"✅ Задача перенесена на {new_date}", reply_markup=get_main_keyboard())
+
+# --- ЗАГРУЗКА ПЛАНА ТРЕНИРОВОК ---
+@dp.callback_query(F.data == "add_workout_plan")
+async def process_add_workout_plan(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "Пришли план тренировок текстом, по одному дню в строке:\n\n"
+        "Понедельник: Бег 5 км\n"
+        "Среда: Зал - день ног\n"
+        "Пятница: Йога\n\n"
+        "Бот сам раскидает их по датам на ближайшую неделю."
+    )
+    await state.set_state(AddWorkoutPlan.waiting_for_plan)
+    await callback.answer()
+
+@dp.message(AddWorkoutPlan.waiting_for_plan)
+async def save_workout_plan(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    days_map = {"понедельник": 0, "пн": 0, "вторник": 1, "вт": 1, "среда": 2, "ср": 2,
+                "четверг": 3, "чт": 3, "пятница": 4, "пт": 4,
+                "суббота": 5, "сб": 5, "воскресенье": 6, "вс": 6}
+    today = date.today()
+    current_weekday = today.weekday()
+    added_count = 0
+    async with aiosqlite.connect("assistant.db") as db:
+        for line in message.text.strip().split("\n"):
+            day_part, workout = None, None
+            for sep in (":", "—", "–", "-"):
+                if sep in line:
+                    idx = line.index(sep)
+                    day_part, workout = line[:idx], line[idx + 1:]
+                    break
+            if not day_part or not workout:
+                continue
+            day_name = day_part.strip().lower()
+            if day_name in days_map:
+                days_ahead = (days_map[day_name] - current_weekday) % 7
+                if days_ahead == 0:
+                    days_ahead = 7
+                target_date = today + timedelta(days=days_ahead)
+                await db.execute(
+                    "INSERT INTO tasks (user_id, task_text, task_date, task_type) VALUES (?, ?, ?, ?)",
+                    (user_id, workout.strip(), target_date.isoformat(), "workout"))
+                added_count += 1
+        await db.commit()
+    await state.clear()
+    await message.answer(f"✅ Добавлено тренировок: {added_count} 🎉", reply_markup=get_main_keyboard())
+
+# --- СТРАХОВКА ОТ НЕИЗВЕСТНЫХ КНОПОК ---
+@dp.callback_query()
+async def unknown_callback(callback: types.CallbackQuery):
+    await callback.answer("Эта кнопка пока не настроена 🙂")
 
 # --- ПОГОДА ---
 async def get_weather_report(is_morning=True):
@@ -255,13 +330,12 @@ async def get_weather_report(is_morning=True):
     except:
         return "🌤 **Погода:** Не удалось загрузить.\n"
 
-# --- ОТЧЕТЫ ---
+# --- УТРЕННИЙ ОТЧЁТ ---
 async def morning_report():
     today = date.today().isoformat()
     weather = await get_weather_report(True)
     emails = await get_unread_emails_count()
     email_text = f"📧 **Почта:** {emails} непрочитанных\n" if emails >= 0 else ""
-    
     async with aiosqlite.connect("assistant.db") as db:
         async with db.execute("SELECT DISTINCT user_id FROM tasks WHERE task_date = ?", (today,)) as cursor:
             users = await cursor.fetchall()
@@ -273,12 +347,12 @@ async def morning_report():
         try: await bot.send_message(user_id, report + "\n\nОтличного дня! 🚀")
         except: pass
 
+# --- ВЕЧЕРНИЙ ОТЧЁТ ---
 async def evening_report():
     tomorrow = (date.today() + timedelta(days=1)).isoformat()
     weather = await get_weather_report(False)
     emails = await get_unread_emails_count()
     email_text = f"📧 **Почта:** {emails} непрочитанных\n" if emails >= 0 else ""
-    
     async with aiosqlite.connect("assistant.db") as db:
         async with db.execute("SELECT DISTINCT user_id FROM tasks WHERE task_date = ?", (tomorrow,)) as cursor:
             users = await cursor.fetchall()
