@@ -20,7 +20,7 @@ from pydub import AudioSegment
 # НАСТРОЙКИ
 # ==========================================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "ТВОЙ_ТОКЕН")
-GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS", "lexjukov.82@gmail.com")
+GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS", "lexajukov.82@gmail.com")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "ТВОЙ_ПАРОЛЬ")
 
 logging.basicConfig(level=logging.INFO)
