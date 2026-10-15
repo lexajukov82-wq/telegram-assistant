@@ -228,7 +228,10 @@ async def show_today(callback: types.CallbackQuery):
         async with db.execute("SELECT id, task_text, task_type FROM tasks WHERE user_id = ? AND task_date = ?", (callback.from_user.id, today)) as cursor:
             tasks = await cursor.fetchall()
     text = f"📅 **Твой план на {today}:**\n\n" + "\n".join([f"• {'💪' if t[2]=='workout' else '📝'} {t[1]} (ID: {t[0]})" for t in tasks]) if tasks else "На сегодня план пуст."
-    await callback.message.edit_text(text, reply_markup=get_main_keyboard())
+    try:
+        await callback.message.edit_text(text, reply_markup=get_main_keyboard())
+    except Exception:
+        pass  # Игнорируем ошибку, если текст не изменился
     await callback.answer()
 
 # --- ПЕРЕНОС ЗАДАЧИ ---
