@@ -281,35 +281,54 @@ async def process_add_workout_plan(callback: types.CallbackQuery, state: FSMCont
 @dp.message(AddWorkoutPlan.waiting_for_plan)
 async def save_workout_plan(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
-    days_map = {"понедельник": 0, "пн": 0, "вторник": 1, "вт": 1, "среда": 2, "ср": 2,
-                "четверг": 3, "чт": 3, "пятница": 4, "пт": 4,
-                "суббота": 5, "сб": 5, "воскресенье": 6, "вс": 6}
+    days_map = {
+        "понедельник": 0, "пн": 0, 
+        "вторник": 1, "вт": 1, 
+        "среда": 2, "ср": 2, 
+        "четверг": 3, "чт": 3, 
+        "пятница": 4, "пт": 4, 
+        "суббота": 5, "сб": 5, 
+        "воскресенье": 6, "вс": 6
+    }
+    
     today = date.today()
     current_weekday = today.weekday()
     added_count = 0
+    
+    # Разбиваем текст на строки и убираем пустые
+    lines = [line.strip() for line in message.text.strip().split("\n") if line.strip()]
+    
     async with aiosqlite.connect("assistant.db") as db:
-        for line in message.text.strip().split("\n"):
-            day_part, workout = None, None
-            for sep in (":", "—", "–", "-"):
-                if sep in line:
-                    idx = line.index(sep)
-                    day_part, workout = line[:idx], line[idx + 1:]
+        for line in lines:
+            day_part = None
+            workout = line
+            
+            # Ищем название дня недели в начале строки
+            for day_name in days_map.keys():
+                if line.lower().startswith(day_name):
+                    day_part = day_name
+                    # Отрезаем название дня и любые разделители (двоеточие, тире, пробелы)
+                    workout = line[len(day_name):].strip(" \t:-–—")
                     break
-            if not day_part or not workout:
-                continue
-            day_name = day_part.strip().lower()
-            if day_name in days_map:
-                days_ahead = (days_map[day_name] - current_weekday) % 7
+            
+            if day_part and workout:
+                target_weekday = days_map[day_part]
+                days_ahead = (target_weekday - current_weekday) % 7
                 if days_ahead == 0:
-                    days_ahead = 7
+                    days_ahead = 7  # Если сегодня этот день, ставим на следующую неделю
+                
                 target_date = today + timedelta(days=days_ahead)
+                
                 await db.execute(
                     "INSERT INTO tasks (user_id, task_text, task_date, task_type) VALUES (?, ?, ?, ?)",
-                    (user_id, workout.strip(), target_date.isoformat(), "workout"))
+                    (user_id, workout, target_date.isoformat(), "workout")
+                )
                 added_count += 1
+        
         await db.commit()
+        
     await state.clear()
-    await message.answer(f"✅ Добавлено тренировок: {added_count} 🎉", reply_markup=get_main_keyboard())
+    await message.answer(f"✅ Успешно добавлено тренировок: {added_count} 🎉\nТеперь каждая тренировка — это отдельная задача с своим ID!", reply_markup=get_main_keyboard())
 
 # --- СТРАХОВКА ОТ НЕИЗВЕСТНЫХ КНОПОК ---
 @dp.callback_query()
