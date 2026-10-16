@@ -3,6 +3,9 @@ import logging
 import aiohttp
 import imaplib
 import os
+import json
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 from datetime import date, datetime, timedelta
 
 from aiogram import Bot, Dispatcher, types, F
@@ -30,6 +33,46 @@ dp = Dispatcher(storage=storage)
 
 LAT = 56.3333
 LON = 39.3833
+
+# --- НАСТРОЙКА GOOGLE КАЛЕНДАРЯ ---
+SCOPES = ['https://www.googleapis.com/auth/calendar.events']
+creds = None
+try:
+    creds_dict = json.loads(os.getenv("GOOGLE_CREDENTIALS", "{}"))
+    if creds_dict:
+        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        calendar_service = build('calendar', 'v3', credentials=creds)
+    else:
+        calendar_service = None
+except Exception as e:
+    logging.error(f"Ошибка инициализации календаря: {e}")
+    calendar_service = None
+
+def add_event_to_calendar(date_str, summary, description=""):
+    if not calendar_service:
+        logging.warning("Календарь не настроен, событие не добавлено.")
+        return False
+    try:
+        # date_str ожидается в формате YYYY-MM-DD
+        event = {
+            'summary': summary,
+            'description': description,
+            'start': {
+                'date': date_str,
+                'timeZone': 'Europe/Moscow',
+            },
+            'end': {
+                'date': date_str,
+                'timeZone': 'Europe/Moscow',
+            },
+        }
+        event_result = calendar_service.events().insert(calendarId='primary', body=event).execute()
+        logging.info(f"Событие добавлено в календарь: {event_result.get('htmlLink')}")
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка добавления в календарь: {e}")
+        return False
+# ----------------------------------
 
 # --- БАЗА ДАННЫХ ---
 async def init_db():
@@ -190,6 +233,16 @@ async def save_task(message: types.Message, state: FSMContext):
         await db.execute("INSERT INTO tasks (user_id, task_text, task_date, task_type) VALUES (?, ?, ?, ?)",
                          (message.from_user.id, message.text, today, task_type))
         await db.commit()
+        
+  emoji = "💪" if task_type == "workout" else "📝"
+ # Добавляем в Google Календарь
+ add_event_to_calendar(
+     date_str=today,
+     summary=f"{emoji} {message.text[:50]}...",
+     description=message.text
+ )
+
+ await state.clear()       
     await state.clear()
     emoji = "💪" if task_type == "workout" else "📝"
     await message.answer(f"{emoji} Записал!", reply_markup=get_main_keyboard())
@@ -338,7 +391,12 @@ async def save_workout_plan(message: types.Message, state: FSMContext):
                 added_count += 1
         
         await db.commit()
-        
+                # Добавляем в Google Календарь
+             add_event_to_calendar(
+                 date_str=target_date.isoformat(),
+                 summary=f"🏃‍♂️ Тренировка: {workout_text[:50]}...", # Обрезаем, если слишком длинно
+                 description=workout_text
+             )     
     await state.clear()
     await message.answer(f"✅ Успешно добавлено тренировок: {added_count} 🎉\nТеперь каждая тренировка — это отдельная задача!", reply_markup=get_main_keyboard())
 
