@@ -298,24 +298,33 @@ async def save_workout_plan(message: types.Message, state: FSMContext):
     current_weekday = today.weekday()
     added_count = 0
     
-    # Разбиваем текст на строки и убираем пустые
-    lines = [line.strip() for line in message.text.strip().split("\n") if line.strip()]
+    # Разбиваем текст на строки
+    lines = message.text.strip().split('\n')
     
     async with aiosqlite.connect("assistant.db") as db:
         for line in lines:
-            day_part = None
-            workout = line
+            line = line.strip()
+            if not line:
+                continue
             
-            # Ищем название дня недели в начале строки
+            found_day = None
+            workout_text = line
+            
+            # Ищем день недели в любом месте строки (это надежнее, чем startswith)
             for day_name in days_map.keys():
-                if line.lower().startswith(day_name):
-                    day_part = day_name
-                    # Отрезаем название дня и любые разделители (двоеточие, тире, пробелы)
-                    workout = line[len(day_name):].strip(" \t:-–—")
+                if day_name in line.lower():
+                    found_day = day_name
+                    # Находим, где именно начинается день недели
+                    idx = line.lower().find(day_name)
+                    # Берем весь текст ПОСЛЕ названия дня
+                    remainder = line[idx + len(day_name):].strip()
+                    # Убираем двоеточия, тире и пробелы в начале
+                    workout_text = remainder.lstrip(': \t-–—')
                     break
             
-            if day_part and workout:
-                target_weekday = days_map[day_part]
+            # Если день найден и текст тренировки не пустой — сохраняем
+            if found_day and workout_text:
+                target_weekday = days_map[found_day]
                 days_ahead = (target_weekday - current_weekday) % 7
                 if days_ahead == 0:
                     days_ahead = 7  # Если сегодня этот день, ставим на следующую неделю
@@ -324,14 +333,14 @@ async def save_workout_plan(message: types.Message, state: FSMContext):
                 
                 await db.execute(
                     "INSERT INTO tasks (user_id, task_text, task_date, task_type) VALUES (?, ?, ?, ?)",
-                    (user_id, workout, target_date.isoformat(), "workout")
+                    (user_id, workout_text, target_date.isoformat(), "workout")
                 )
                 added_count += 1
         
         await db.commit()
         
     await state.clear()
-    await message.answer(f"✅ Успешно добавлено тренировок: {added_count} 🎉\nТеперь каждая тренировка — это отдельная задача с своим ID!", reply_markup=get_main_keyboard())
+    await message.answer(f"✅ Успешно добавлено тренировок: {added_count} 🎉\nТеперь каждая тренировка — это отдельная задача!", reply_markup=get_main_keyboard())
 
 # --- СТРАХОВКА ОТ НЕИЗВЕСТНЫХ КНОПОК ---
 @dp.callback_query()
