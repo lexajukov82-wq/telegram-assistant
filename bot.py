@@ -66,7 +66,7 @@ def add_event_to_calendar(date_str, summary, description=""):
                 'timeZone': 'Europe/Moscow',
             },
         }
-        event_result = calendar_service.events().insert(calendarId='primary', body=event).execute()
+        event_result = calendar_service.events().insert(calendarId='lexajukov.82@gmail.com', body=event).execute()
         logging.info(f"Событие добавлено в календарь: {event_result.get('htmlLink')}")
         return True
     except Exception as e:
