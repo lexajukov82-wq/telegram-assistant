@@ -336,22 +336,18 @@ async def process_add_workout_plan(callback: types.CallbackQuery, state: FSMCont
 async def save_workout_plan(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     days_map = {
-        "понедельник": 0, "пн": 0, 
-        "вторник": 1, "вт": 1, 
-        "среда": 2, "ср": 2, 
-        "четверг": 3, "чт": 3, 
-        "пятница": 4, "пт": 4, 
-        "суббота": 5, "сб": 5, 
-        "воскресенье": 6, "вс": 6
+        "понедельник": 0, "пн": 0, "вторник": 1, "вт": 1, "среда": 2, "ср": 2,
+        "четверг": 3, "чт": 3, "пятница": 4, "пт": 4, "суббота": 5, "сб": 5, "воскресенье": 6, "вс": 6
     }
     
     today = date.today()
     current_weekday = today.weekday()
     added_count = 0
+    events_to_add = [] # Список для событий календаря
     
-    # Разбиваем текст на строки
     lines = message.text.strip().split('\n')
     
+    # 1. Сначала сохраняем всё в базу данных
     async with aiosqlite.connect("assistant.db") as db:
         for line in lines:
             line = line.strip()
@@ -361,40 +357,46 @@ async def save_workout_plan(message: types.Message, state: FSMContext):
             found_day = None
             workout_text = line
             
-            # Ищем день недели в любом месте строки (это надежнее, чем startswith)
             for day_name in days_map.keys():
                 if day_name in line.lower():
                     found_day = day_name
-                    # Находим, где именно начинается день недели
                     idx = line.lower().find(day_name)
-                    # Берем весь текст ПОСЛЕ названия дня
                     remainder = line[idx + len(day_name):].strip()
-                    # Убираем двоеточия, тире и пробелы в начале
                     workout_text = remainder.lstrip(': \t-–—')
                     break
             
-            # Если день найден и текст тренировки не пустой — сохраняем
             if found_day and workout_text:
                 target_weekday = days_map[found_day]
                 days_ahead = (target_weekday - current_weekday) % 7
                 if days_ahead == 0:
-                    days_ahead = 7  # Если сегодня этот день, ставим на следующую неделю
+                    days_ahead = 7
                 
                 target_date = today + timedelta(days=days_ahead)
+                date_str = target_date.isoformat()
                 
                 await db.execute(
                     "INSERT INTO tasks (user_id, task_text, task_date, task_type) VALUES (?, ?, ?, ?)",
-                    (user_id, workout_text, target_date.isoformat(), "workout")
+                    (user_id, workout_text, date_str, "workout")
                 )
                 added_count += 1
                 
-                # Добавляем в Google Календарь
-                add_event_to_calendar(
-                    date_str=target_date.isoformat(),
-                    summary=f"🏃‍️ Тренировка: {workout_text[:50]}...",
-                    description=workout_text
-                )
-    await db.commit()             
+                # Сохраняем данные, чтобы добавить в календарь ПОСЛЕ закрытия БД
+                events_to_add.append({
+                    "date": date_str,
+                    "summary": f"🏃‍♂️ Тренировка: {workout_text[:50]}...",
+                    "description": workout_text
+                })
+        
+        await db.commit() # Надежно сохраняем в БД
+
+    # 2. После закрытия БД спокойно добавляем события в календарь
+    for ev in events_to_add:
+        add_event_to_calendar(
+            date_str=ev["date"],
+            summary=ev["summary"],
+            description=ev["description"]
+        )
+        
     await state.clear()
     await message.answer(f"✅ Успешно добавлено тренировок: {added_count} 🎉\nТеперь каждая тренировка — это отдельная задача!", reply_markup=get_main_keyboard())
 
