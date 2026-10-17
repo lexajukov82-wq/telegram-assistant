@@ -339,15 +339,16 @@ async def save_workout_plan(message: types.Message, state: FSMContext):
         "понедельник": 0, "пн": 0, "вторник": 1, "вт": 1, "среда": 2, "ср": 2,
         "четверг": 3, "чт": 3, "пятница": 4, "пт": 4, "суббота": 5, "сб": 5, "воскресенье": 6, "вс": 6
     }
+    days_names_ru = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     
     today = date.today()
     current_weekday = today.weekday()
-    added_count = 0
-    events_to_add = [] # Список для событий календаря
     
     lines = message.text.strip().split('\n')
+    events_to_add = []
+    summary_text = [] # Для красивого отчета в Telegram
     
-    # 1. Сначала сохраняем всё в базу данных
+    # 1. Сохраняем в базу данных
     async with aiosqlite.connect("assistant.db") as db:
         for line in lines:
             line = line.strip()
@@ -367,29 +368,34 @@ async def save_workout_plan(message: types.Message, state: FSMContext):
             
             if found_day and workout_text:
                 target_weekday = days_map[found_day]
-                days_ahead = (target_weekday - current_weekday) % 7
-                if days_ahead == 0:
-                    days_ahead = 7
+                
+                # Правильный расчет: если день уже прошел на этой неделе, переносим на следующую
+                days_ahead = target_weekday - current_weekday
+                if days_ahead < 0:
+                    days_ahead += 7
                 
                 target_date = today + timedelta(days=days_ahead)
                 date_str = target_date.isoformat()
+                day_name_short = days_names_ru[target_weekday]
                 
                 await db.execute(
                     "INSERT INTO tasks (user_id, task_text, task_date, task_type) VALUES (?, ?, ?, ?)",
                     (user_id, workout_text, date_str, "workout")
                 )
-                added_count += 1
                 
-                # Сохраняем данные, чтобы добавить в календарь ПОСЛЕ закрытия БД
+                # Добавляем в календарь
                 events_to_add.append({
                     "date": date_str,
                     "summary": f"🏃‍♂️ Тренировка: {workout_text[:50]}...",
                     "description": workout_text
                 })
+                
+                # Формируем красивый отчет (берем первые 30 символов тренировки)
+                summary_text.append(f"• {day_name_short} ({target_date.strftime('%d.%m')}): {workout_text[:30]}...")
         
-        await db.commit() # Надежно сохраняем в БД
+        await db.commit()
 
-    # 2. После закрытия БД спокойно добавляем события в календарь
+    # 2. Добавляем события в Google Календарь
     for ev in events_to_add:
         add_event_to_calendar(
             date_str=ev["date"],
@@ -398,7 +404,10 @@ async def save_workout_plan(message: types.Message, state: FSMContext):
         )
         
     await state.clear()
-    await message.answer(f"✅ Успешно добавлено тренировок: {added_count} 🎉\nТеперь каждая тренировка — это отдельная задача!", reply_markup=get_main_keyboard())
+    
+    # 3. Отправляем красивый отчет пользователю
+    report = "✅ Успешно добавлено тренировок: " + str(len(events_to_add)) + " 🎉\n\n📅 Расписание на ближайшие дни:\n" + "\n".join(summary_text)
+    await message.answer(report, reply_markup=get_main_keyboard())
 
 # --- СТРАХОВКА ОТ НЕИЗВЕСТНЫХ КНОПОК ---
 @dp.callback_query()
