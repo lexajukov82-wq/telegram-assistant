@@ -387,14 +387,14 @@ async def save_workout_plan(message: types.Message, state: FSMContext):
                     (user_id, workout_text, target_date.isoformat(), "workout")
                 )
                 added_count += 1
-        
-        await db.commit()
+                
                 # Добавляем в Google Календарь
-             add_event_to_calendar(
-                 date_str=target_date.isoformat(),
-                 summary=f"🏃‍♂️ Тренировка: {workout_text[:50]}...", # Обрезаем, если слишком длинно
-                 description=workout_text
-             )     
+                add_event_to_calendar(
+                    date_str=target_date.isoformat(),
+                    summary=f"🏃‍️ Тренировка: {workout_text[:50]}...",
+                    description=workout_text
+                )
+    await db.commit()             
     await state.clear()
     await message.answer(f"✅ Успешно добавлено тренировок: {added_count} 🎉\nТеперь каждая тренировка — это отдельная задача!", reply_markup=get_main_keyboard())
 
