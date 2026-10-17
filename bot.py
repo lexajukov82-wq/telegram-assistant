@@ -233,20 +233,18 @@ async def save_task(message: types.Message, state: FSMContext):
         await db.execute("INSERT INTO tasks (user_id, task_text, task_date, task_type) VALUES (?, ?, ?, ?)",
                          (message.from_user.id, message.text, today, task_type))
         await db.commit()
-        
-  emoji = "💪" if task_type == "workout" else "📝"
- # Добавляем в Google Календарь
- add_event_to_calendar(
-     date_str=today,
-     summary=f"{emoji} {message.text[:50]}...",
-     description=message.text
- )
-
- await state.clear()       
-    await state.clear()
+    
     emoji = "💪" if task_type == "workout" else "📝"
+    
+    # Добавляем в Google Календарь
+    add_event_to_calendar(
+        date_str=today,
+        summary=f"{emoji} {message.text[:50]}...",
+        description=message.text
+    )
+    
+    await state.clear()
     await message.answer(f"{emoji} Записал!", reply_markup=get_main_keyboard())
-
 # --- ЗАМЕТКИ ---
 @dp.callback_query(F.data == "add_note")
 async def process_add_note(callback: types.CallbackQuery, state: FSMContext):
